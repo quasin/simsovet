@@ -1,6 +1,6 @@
 import sys
 import os
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QUrl, QEvent
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -12,7 +12,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QToolBar,
     QLabel,
-    QStyle
+    QStyle,
+    QStatusBar
 )
 from PySide6.QtWebEngineCore import QWebEngineProfile
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -35,6 +36,9 @@ class WebBrowser(QMainWindow):
         # Optional: Force it to save inside your 'data' folder
         storage_path = os.path.join(os.path.dirname(__file__), "data", "browser_profile")
         self.profile.setPersistentStoragePath(storage_path)
+
+        # Create status bar for link hover feedback
+        self.setStatusBar(QStatusBar(self))
 
         # Main layout container
         central_widget = QWidget()
@@ -79,6 +83,9 @@ class WebBrowser(QMainWindow):
         self.tabs.setTabsClosable(True)
         self.tabs.tabCloseRequested.connect(self.close_tab)
         self.tabs.currentChanged.connect(self.tab_changed)
+        self.tab_titles = {}
+        self.tabs.tabBar().setMouseTracking(True)
+        self.tabs.tabBar().installEventFilter(self)
         right_layout.addWidget(self.tabs)
 
         # Assemble Main Layout
@@ -147,6 +154,7 @@ class WebBrowser(QMainWindow):
         
         # Use the shared profile initialized in __init__
         custom_page = CustomWebEnginePage(self, self.profile, browser)
+        custom_page.linkHovered.connect(self.show_link_in_status_bar)
         browser.setPage(custom_page)
         
         if qurl:
@@ -155,6 +163,7 @@ class WebBrowser(QMainWindow):
         # Add to Tab Widget
         i = self.tabs.addTab(browser, title)
         self.tabs.setCurrentIndex(i)
+        self.tab_titles[browser] = title
 
         browser.urlChanged.connect(lambda qurl, browser=browser: self.update_url_bar(qurl, browser))
         browser.titleChanged.connect(lambda title, browser=browser: self.update_tab_title(title, browser))
@@ -168,6 +177,7 @@ class WebBrowser(QMainWindow):
             
         browser = self.tabs.widget(index)
         if browser:
+            self.tab_titles.pop(browser, None)
             # Disconnect the page from the view cleanly before deleting
             browser.setPage(None) 
             browser.deleteLater()
@@ -215,9 +225,36 @@ class WebBrowser(QMainWindow):
         """Updates the actual tab title text dynamically."""
         index = self.tabs.indexOf(browser)
         if index != -1:
+            self.tab_titles[browser] = title
+            self.tabs.setTabToolTip(index, title)
             # Crop string if title is excessively long
             short_title = title[:15] + "..." if len(title) > 15 else title
             self.tabs.setTabText(index, short_title)
+
+    def eventFilter(self, watched, event):
+        if watched == self.tabs.tabBar():
+            if event.type() == QEvent.Type.MouseMove:
+                tab_index = self.tabs.tabBar().tabAt(event.pos())
+                if tab_index != -1:
+                    browser = self.tabs.widget(tab_index)
+                    full_title = self.tab_titles.get(browser)
+                    if full_title:
+                        self.statusBar().showMessage(full_title)
+                    else:
+                        self.statusBar().clearMessage()
+                else:
+                    self.statusBar().clearMessage()
+            elif event.type() == QEvent.Type.Leave:
+                self.statusBar().clearMessage()
+
+        return super().eventFilter(watched, event)
+
+    def show_link_in_status_bar(self, link):
+        """Displays the hovered link in the status bar."""
+        if link:
+            self.statusBar().showMessage(str(link))
+        else:
+            self.statusBar().clearMessage()
 
     def closeEvent(self, event):
         """Forces all WebEngine pages to delete themselves before the profile is destroyed on exit."""
