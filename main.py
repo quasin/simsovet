@@ -53,11 +53,17 @@ class WebBrowser(QMainWindow):
         sidebar_title.setStyleSheet("font-weight: bold; font-size: 14px; padding: 10px;")
         sidebar_layout.addWidget(sidebar_title)
         
-        # Placeholder content for the sidebar
-        sidebar_info = QLabel("You can use this space for Bookmarks, History, or Extensions.")
-        sidebar_info.setWordWrap(True)
-        sidebar_info.setStyleSheet("padding: 10px; color: #a3be8c;")
-        sidebar_layout.addWidget(sidebar_info)
+        # Sidebar buttons with links
+        btn_container = QWidget()
+        btn_layout = QHBoxLayout(btn_container)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(5)
+        for label, url in [("Alice", "https://alice.yandex.ru"), ("Gemini", "https://gemini.google.com"), ("DeepSeek", "https://chat.deepseek.com")]:
+            btn = QPushButton(label)
+            btn.setStyleSheet("padding: 8px; background-color: #3b4252; border: 1px solid #4c566a; border-radius: 4px; color: #eceff4; font-weight: bold; font-size: 10px;")
+            btn.clicked.connect((lambda u, l: lambda: self.add_new_tab(QUrl(u), l))(url, label))
+            btn_layout.addWidget(btn)
+        sidebar_layout.addWidget(btn_container)
         sidebar_layout.addStretch() # Pushes content to the top
 
         # 2. MAIN BROWSER AREA (Right Side)
