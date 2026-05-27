@@ -26,6 +26,16 @@ class WebBrowser(QMainWindow):
         self.setWindowTitle("Simsovet - Neuro Handler")
         self.resize(1200, 800)
 
+        # Create ONE shared persistent profile for the entire application life
+        self.profile = QWebEngineProfile("MyBrowserProfile", self)
+        self.profile.setPersistentCookiesPolicy(
+            QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
+        )
+        
+        # Optional: Force it to save inside your 'data' folder
+        storage_path = os.path.join(os.path.dirname(__file__), "data", "browser_profile")
+        self.profile.setPersistentStoragePath(storage_path)
+
         # Main layout container
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -129,18 +139,11 @@ class WebBrowser(QMainWindow):
 
     # --- Tab Handling Logic ---
     def add_new_tab(self, qurl=None, title="New Tab"):
-        """Adds a new tab with a persistent web engine profile for cookies."""
+        """Adds a new tab using the shared global profile."""
         browser = QWebEngineView()
         
-        # 1. Get or create a persistent profile named "MyBrowserProfile"
-        # This automatically creates a storage folder on your computer for cookies/cache
-        profile = QWebEngineProfile("MyBrowserProfile", browser)
-        profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
-        storage_path = os.path.join(os.path.dirname(__file__), "data/browser_profile")
-        profile.setPersistentStoragePath(storage_path)
-        
-        # 2. Create the custom page using this persistent profile
-        custom_page = CustomWebEnginePage(self, profile, browser)
+        # Use the shared profile initialized in __init__
+        custom_page = CustomWebEnginePage(self, self.profile, browser)
         browser.setPage(custom_page)
         
         if qurl:
@@ -156,12 +159,16 @@ class WebBrowser(QMainWindow):
         return browser
 
     def close_tab(self, index):
-        """Closes the targeted tab, keeping at least one open."""
+        """Closes the targeted tab and explicitly disposes of the web engine assets."""
         if self.tabs.count() < 2:
             return
-        widget = self.tabs.widget(index)
-        if widget:
-            widget.deleteLater()
+            
+        browser = self.tabs.widget(index)
+        if browser:
+            # Disconnect the page from the view cleanly before deleting
+            browser.setPage(None) 
+            browser.deleteLater()
+            
         self.tabs.removeTab(index)
 
     def current_browser(self) -> QWebEngineView:
@@ -208,6 +215,27 @@ class WebBrowser(QMainWindow):
             # Crop string if title is excessively long
             short_title = title[:15] + "..." if len(title) > 15 else title
             self.tabs.setTabText(index, short_title)
+
+    def closeEvent(self, event):
+        """Forces all WebEngine pages to delete themselves before the profile is destroyed on exit."""
+        # Loop through all tabs backwards and destroy them
+        for i in reversed(range(self.tabs.count())):
+            browser = self.tabs.widget(i)
+            if browser:
+                # 1. Break the link between the view and the page
+                browser.setPage(None)
+                # 2. Tell Qt to delete the browser object immediately
+                browser.deleteLater()
+        
+        # Clear the tab widget completely
+        self.tabs.clear()
+        
+        # Process any pending deletion events right now before letting the window close
+        QApplication.sendPostedEvents()
+        QApplication.processEvents()
+        
+        # Accept the close event to exit normally
+        event.accept()
 
 class CustomWebEnginePage(QWebEnginePage):
     def __init__(self, browser_window, profile, *args, **kwargs):
