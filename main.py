@@ -234,7 +234,7 @@ class WebBrowser(QMainWindow):
     def eventFilter(self, watched, event):
         if watched == self.tabs.tabBar():
             if event.type() == QEvent.Type.MouseMove:
-                tab_index = self.tabs.tabBar().tabAt(event.pos())
+                tab_index = self.tabs.tabBar().tabAt(event.position().toPoint())
                 if tab_index != -1:
                     browser = self.tabs.widget(tab_index)
                     full_title = self.tab_titles.get(browser)
