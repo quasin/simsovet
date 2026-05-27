@@ -49,9 +49,6 @@ class WebBrowser(QMainWindow):
         self.sidebar.setStyleSheet("background-color: #2e3440; color: #d8dee9; border-right: 1px solid #4c566a;")
         
         sidebar_layout = QVBoxLayout(self.sidebar)
-        sidebar_title = QLabel("Sidebar (320px)")
-        sidebar_title.setStyleSheet("font-weight: bold; font-size: 14px; padding: 10px;")
-        sidebar_layout.addWidget(sidebar_title)
         
         # Sidebar buttons with links
         btn_container = QWidget()
