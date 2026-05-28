@@ -1,6 +1,7 @@
 import sys
 import os
 from PySide6.QtCore import QUrl, QEvent
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -26,6 +27,10 @@ class WebBrowser(QMainWindow):
         super().__init__()
         self.setWindowTitle("Simsovet - Neuro Handler")
         self.resize(1200, 800)
+
+        icon_path = os.path.join(os.path.dirname(__file__), "favicon.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
 
         # Create ONE shared persistent profile for the entire application life
         self.profile = QWebEngineProfile("MyBrowserProfile", self)
@@ -290,6 +295,10 @@ class CustomWebEnginePage(QWebEnginePage):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    if sys.platform == "win32":
+        import ctypes
+        myappid = "simsovet.neurohandler.browser.1.0"
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
     window = WebBrowser()
     window.show()
     sys.exit(app.exec())
