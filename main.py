@@ -1,5 +1,8 @@
 import sys
 import os
+import sqlite3
+from datetime import datetime
+from urllib.parse import urlparse
 from PySide6.QtCore import QUrl, QEvent
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
@@ -19,7 +22,6 @@ from PySide6.QtWidgets import (
 from PySide6.QtWebEngineCore import QWebEngineProfile
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEnginePage
-from PySide6.QtWebEngineCore import QWebEngineProfile
 
 
 class WebBrowser(QMainWindow):
@@ -28,38 +30,39 @@ class WebBrowser(QMainWindow):
         self.setWindowTitle("Simsovet - Neuro Handler")
         self.resize(1200, 800)
 
-        icon_path = os.path.join(os.path.dirname(__file__), "favicon.png")
+        self.base_dir = os.path.dirname(__file__)
+        self.data_dir = os.path.join(self.base_dir, "data")
+        os.makedirs(self.data_dir, exist_ok=True)
+
+        self.db_path = os.path.join(self.data_dir, "simsovet.db")
+        self.init_db()
+
+        icon_path = os.path.join(self.base_dir, "favicon.png")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
-        # Create ONE shared persistent profile for the entire application life
         self.profile = QWebEngineProfile("MyBrowserProfile", self)
         self.profile.setPersistentCookiesPolicy(
             QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
         )
         
-        # Optional: Force it to save inside your 'data' folder
-        storage_path = os.path.join(os.path.dirname(__file__), "data", "browser_profile")
+        storage_path = os.path.join(self.data_dir, "browser_profile")
         self.profile.setPersistentStoragePath(storage_path)
 
-        # Create status bar for link hover feedback
         self.setStatusBar(QStatusBar(self))
 
-        # Main layout container
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # 1. SIDEBAR (Fixed 320px width)
         self.sidebar = QWidget()
         self.sidebar.setFixedWidth(320)
         self.sidebar.setStyleSheet("background-color: #2e3440; color: #d8dee9; border-right: 1px solid #4c566a;")
         
         sidebar_layout = QVBoxLayout(self.sidebar)
         
-        # Sidebar buttons with links
         btn_container = QWidget()
         btn_layout = QHBoxLayout(btn_container)
         btn_layout.setContentsMargins(0, 0, 0, 0)
@@ -70,20 +73,36 @@ class WebBrowser(QMainWindow):
             btn.clicked.connect((lambda u, l: lambda: self.add_new_tab(QUrl(u), l))(url, label))
             btn_layout.addWidget(btn)
         sidebar_layout.addWidget(btn_container)
-        sidebar_layout.addStretch() # Pushes content to the top
 
-        # 2. MAIN BROWSER AREA (Right Side)
+        self.recent_history_section = QWidget()
+        recent_history_layout = QVBoxLayout(self.recent_history_section)
+        recent_history_layout.setContentsMargins(0, 0, 0, 0)
+        recent_history_layout.setSpacing(5)
+
+        history_label = QLabel("Recent History")
+        history_label.setStyleSheet("color: #eceff4; font-weight: bold; font-size: 11px; padding: 10px 10px 4px 10px;")
+        recent_history_layout.addWidget(history_label)
+
+        self.recent_history_layout = recent_history_layout
+
+        sidebar_layout.addStretch()
+        sidebar_layout.addWidget(self.recent_history_section)
+
+        self.db_status_label = QLabel()
+        self.db_status_label.setStyleSheet("color: #81a1c1; font-size: 11px; padding: 10px; border-top: 1px solid #4c566a;")
+        self.db_status_label.setWordWrap(True)
+        sidebar_layout.addWidget(self.db_status_label)
+        self.update_sidebar_status()
+
         right_container = QWidget()
         right_layout = QVBoxLayout(right_container)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
 
-        # Navigation Toolbar
         self.toolbar = QToolBar()
         self.toolbar.setMovable(False)
         right_layout.addWidget(self.toolbar)
 
-        # Tab Widget
         self.tabs = QTabWidget()
         self.tabs.setTabsClosable(True)
         self.tabs.tabCloseRequested.connect(self.close_tab)
@@ -93,71 +112,153 @@ class WebBrowser(QMainWindow):
         self.tabs.tabBar().installEventFilter(self)
         right_layout.addWidget(self.tabs)
 
-        # Assemble Main Layout
         main_layout.addWidget(self.sidebar)
         main_layout.addWidget(right_container)
 
-        # Build the Toolbar UI
         self.create_toolbar_actions()
 
-        # Open default initial tab
         self.add_new_tab(QUrl("https://www.google.com"), "New Tab")
 
+    def init_db(self):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL;")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT,
+                url TEXT NOT NULL,
+                visited_at TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+    def log_to_history(self, title, url):
+        if not url or url == "about:blank":
+            return
+            
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            cursor.execute(
+                "INSERT INTO history (title, url, visited_at) VALUES (?, ?, ?)",
+                (title, url, now)
+            )
+            conn.commit()
+            conn.close()
+            self.update_sidebar_status()
+        except sqlite3.Error as e:
+            print(f"Ошибка логирования в БД: {e}")
+
+    def refresh_recent_history(self):
+        while self.recent_history_layout.count():
+            item = self.recent_history_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+        history_label = QLabel("Recent History")
+        history_label.setStyleSheet("color: #eceff4; font-weight: bold; font-size: 11px; padding: 10px 10px 4px 10px;")
+        self.recent_history_layout.addWidget(history_label)
+
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT title, url FROM history ORDER BY id DESC LIMIT 3")
+            recent_rows = cursor.fetchall()
+            conn.close()
+        except sqlite3.Error:
+            recent_rows = []
+
+        for title, url in recent_rows:
+            if not url:
+                continue
+
+            display_text = url
+            if len(display_text) > 60:
+                display_text = display_text[:57] + "..."
+
+            btn = QPushButton(display_text)
+            btn.setToolTip(url)
+            btn.setStyleSheet("padding: 8px; background-color: #3b4252; border: 1px solid #4c566a; border-radius: 4px; color: #eceff4; font-size: 10px; text-align: left;")
+            btn.clicked.connect(lambda checked=False, u=url, display_title=title: self.add_new_tab(QUrl(u), display_title or u))
+            self.recent_history_layout.addWidget(btn)
+
+        if not recent_rows:
+            empty_label = QLabel("No history yet")
+            empty_label.setStyleSheet("color: #d8dee9; font-size: 10px; padding: 0 10px 10px 10px;")
+            self.recent_history_layout.addWidget(empty_label)
+
+    def update_sidebar_status(self):
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT COUNT(*) FROM history")
+            total_count = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT url FROM history")
+            urls = cursor.fetchall()
+            domains = {urlparse(row[0]).netloc for row in urls if row[0]}
+            unique_domains = len(domains)
+            
+            cursor.execute("SELECT visited_at FROM history ORDER BY id DESC LIMIT 1")
+            last_time_row = cursor.fetchone()
+            last_time = last_time_row[0].split(" ")[1] if last_time_row else "None"
+            
+            conn.close()
+            
+            status_text = f"Total: {total_count} | Domains: {unique_domains} | Last: {last_time}"
+            self.db_status_label.setText(status_text)
+            self.refresh_recent_history()
+        except sqlite3.Error:
+            self.db_status_label.setText("DB: Error loading statistics")
+
     def create_toolbar_actions(self):
-        """Creates and wires up all navigation buttons requested."""
-        # Standard system icons used for portability
         style = QApplication.style()
 
-        # Back Button
         self.back_btn = QPushButton()
         self.back_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowLeft))
         self.back_btn.clicked.connect(lambda: self.current_browser().back())
         self.toolbar.addWidget(self.back_btn)
 
-        # Forward Button
         self.forward_btn = QPushButton()
         self.forward_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowRight))
         self.forward_btn.clicked.connect(lambda: self.current_browser().forward())
         self.toolbar.addWidget(self.forward_btn)
 
-        # Reload Button
         self.reload_btn = QPushButton()
         self.reload_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
         self.reload_btn.clicked.connect(lambda: self.current_browser().reload())
         self.toolbar.addWidget(self.reload_btn)
 
-        # Home Button
         self.home_btn = QPushButton()
-        self.home_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)) # Fallback home icon
+        self.home_btn.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)) 
         self.home_btn.setText("Home")
         self.home_btn.clicked.connect(self.navigate_home)
         self.toolbar.addWidget(self.home_btn)
 
         self.toolbar.addSeparator()
 
-        # URL Input Bar
         self.url_input = QLineEdit()
         self.url_input.returnPressed.connect(self.navigate_to_url)
         self.toolbar.addWidget(self.url_input)
 
-        # Go Button
         self.go_btn = QPushButton("Go")
         self.go_btn.clicked.connect(self.navigate_to_url)
         self.toolbar.addWidget(self.go_btn)
 
         self.toolbar.addSeparator()
 
-        # New Tab Button
         self.new_tab_btn = QPushButton("+ New Tab")
         self.new_tab_btn.clicked.connect(lambda: self.add_new_tab(QUrl("https://www.google.com"), "New Tab"))
         self.toolbar.addWidget(self.new_tab_btn)
 
-    # --- Tab Handling Logic ---
     def add_new_tab(self, qurl=None, title="New Tab"):
-        """Adds a new tab using the shared global profile."""
         browser = QWebEngineView()
         
-        # Use the shared profile initialized in __init__
         custom_page = CustomWebEnginePage(self, self.profile, browser)
         custom_page.linkHovered.connect(self.show_link_in_status_bar)
         browser.setPage(custom_page)
@@ -165,42 +266,40 @@ class WebBrowser(QMainWindow):
         if qurl:
             browser.setUrl(qurl)
 
-        # Add to Tab Widget
         i = self.tabs.addTab(browser, title)
         self.tabs.setCurrentIndex(i)
         self.tab_titles[browser] = title
 
-        browser.urlChanged.connect(lambda qurl, browser=browser: self.update_url_bar(qurl, browser))
-        browser.titleChanged.connect(lambda title, browser=browser: self.update_tab_title(title, browser))
+        # Handles address bar visual updates
+        browser.urlChanged.connect(lambda qurl, b=browser: self.update_url_bar(qurl, b))
+        
+        # Dedicated handler to intercept background tabs / targets asynchronously
+        browser.urlChanged.connect(lambda qurl, b=browser: self.handle_history_logging(qurl, b))
+        
+        browser.titleChanged.connect(lambda t, b=browser: self.update_tab_title(t, b))
 
         return browser
 
     def close_tab(self, index):
-        """Closes the targeted tab and explicitly disposes of the web engine assets."""
         if self.tabs.count() < 2:
             return
             
         browser = self.tabs.widget(index)
         if browser:
             self.tab_titles.pop(browser, None)
-            # Disconnect the page from the view cleanly before deleting
             browser.setPage(None) 
             browser.deleteLater()
             
         self.tabs.removeTab(index)
 
     def current_browser(self) -> QWebEngineView:
-        """Helper to fetch the active tab's web engine."""
         return self.tabs.currentWidget()
-
-    # --- Navigation Logic ---
 
     def navigate_home(self):
         if self.current_browser():
             self.current_browser().setUrl(QUrl("https://www.google.com"))
 
     def navigate_to_url(self):
-        """Navigates to the written URL text. Automatically appends http:// if missing."""
         q = QUrl(self.url_input.text())
         if q.scheme() == "":
             q.setScheme("http")
@@ -209,30 +308,38 @@ class WebBrowser(QMainWindow):
             self.current_browser().setUrl(q)
 
     def tab_changed(self, index):
-        """Triggers when switching tabs to synchronize the URL bar and buttons."""
         browser = self.tabs.widget(index)
         if browser:
             self.update_url_bar(browser.url(), browser)
 
     def update_url_bar(self, qurl, browser=None):
-        """Updates the URL line edit text and back/forward buttons state."""
-        # Ensure we only update if the event comes from the currently active tab
         if browser != self.current_browser():
             return
         
-        self.url_input.setText(qurl.toString())
-        
-        # Enable or disable buttons depending on page history
+        url_str = qurl.toString()
+        self.url_input.setText(url_str)
         self.back_btn.setEnabled(browser.history().canGoBack())
         self.forward_btn.setEnabled(browser.history().canGoForward())
 
+    def handle_history_logging(self, qurl, browser):
+        url_str = qurl.toString()
+        if not url_str or url_str == "about:blank":
+            return
+
+        # Fetch structural/dynamic titles safely, default to domain if unavailable yet
+        title = self.tab_titles.get(browser, "Loading...")
+        if title in ["Loading...", "New Tab"] and browser.title():
+            title = browser.title()
+        elif title in ["Loading...", "New Tab"]:
+            title = urlparse(url_str).netloc
+
+        self.log_to_history(title, url_str)
+
     def update_tab_title(self, title, browser=None):
-        """Updates the actual tab title text dynamically."""
         index = self.tabs.indexOf(browser)
         if index != -1:
             self.tab_titles[browser] = title
             self.tabs.setTabToolTip(index, title)
-            # Crop string if title is excessively long
             short_title = title[:15] + "..." if len(title) > 15 else title
             self.tabs.setTabText(index, short_title)
 
@@ -255,51 +362,42 @@ class WebBrowser(QMainWindow):
         return super().eventFilter(watched, event)
 
     def show_link_in_status_bar(self, link):
-        """Displays the hovered link in the status bar."""
         if link:
             self.statusBar().showMessage(str(link))
         else:
             self.statusBar().clearMessage()
 
     def closeEvent(self, event):
-        """Forces all WebEngine pages to delete themselves before the profile is destroyed on exit."""
-        # Loop through all tabs backwards and destroy them
         for i in reversed(range(self.tabs.count())):
             browser = self.tabs.widget(i)
             if browser:
-                # 1. Break the link between the view and the page
                 browser.setPage(None)
-                # 2. Tell Qt to delete the browser object immediately
                 browser.deleteLater()
         
-        # Clear the tab widget completely
         self.tabs.clear()
-        
-        # Process any pending deletion events right now before letting the window close
         QApplication.sendPostedEvents()
         QApplication.processEvents()
-        
-        # Accept the close event to exit normally
         event.accept()
+
 
 class CustomWebEnginePage(QWebEnginePage):
     def __init__(self, browser_window, profile, *args, **kwargs):
-        # Pass the profile to the super class so the page uses it
         super().__init__(profile, *args, **kwargs)
         self.browser_window = browser_window
 
     def createWindow(self, _type):
-        """Intercepts target='_blank' links and opens them in a new tab."""
         new_browser = self.browser_window.add_new_tab(qurl=None, title="Loading...")
         return new_browser.page()
 
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    
     if sys.platform == "win32":
         import ctypes
         myappid = "simsovet.neurohandler.browser.1.0"
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+
     window = WebBrowser()
     window.show()
     sys.exit(app.exec())
-
