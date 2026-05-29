@@ -1,9 +1,10 @@
 import sys
 import os
+import json
 import sqlite3
 from datetime import datetime
 from urllib.parse import urlparse
-from PySide6.QtCore import QUrl, QEvent
+from PySide6.QtCore import QUrl, QEvent, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -70,9 +71,19 @@ class WebBrowser(QMainWindow):
         for label, url in [("Alice", "https://alice.yandex.ru"), ("Gemini", "https://gemini.google.com"), ("DeepSeek", "https://chat.deepseek.com")]:
             btn = QPushButton(label)
             btn.setStyleSheet("padding: 8px; background-color: #3b4252; border: 1px solid #4c566a; border-radius: 4px; color: #eceff4; font-weight: bold; font-size: 10px;")
-            btn.clicked.connect((lambda u, l: lambda: self.add_new_tab(QUrl(u), l))(url, label))
+            btn.clicked.connect((lambda u, l: lambda: self.handle_quick_button(u, l))(url, label))
             btn_layout.addWidget(btn)
         sidebar_layout.addWidget(btn_container)
+
+        btn_wonder = QWidget()
+        btn_layout = QHBoxLayout(btn_wonder)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(5)
+        get_post_btn = QPushButton("Get Post")
+        get_post_btn.setStyleSheet("padding: 8px; background-color: #3b4252; border: 1px solid #4c566a; border-radius: 4px; color: #eceff4; font-weight: bold; font-size: 10px;")
+        get_post_btn.clicked.connect(self.handle_get_post)
+        btn_layout.addWidget(get_post_btn)
+        sidebar_layout.addWidget(btn_wonder)
 
         self.recent_history_section = QWidget()
         recent_history_layout = QVBoxLayout(self.recent_history_section)
@@ -306,6 +317,96 @@ class WebBrowser(QMainWindow):
         
         if self.current_browser():
             self.current_browser().setUrl(q)
+
+    def handle_get_post(self):
+        query_text = self.url_input.text().strip()
+        if not query_text:
+            return
+        self._open_and_inject("https://gemini.google.com", "Get Post", query_text)
+
+    def handle_quick_button(self, url, label):
+        query_text = self.url_input.text().strip()
+        if query_text and query_text != "https://www.google.com/":
+            self._open_and_inject(url, label, query_text)
+        else:
+            self.add_new_tab(QUrl(url), label)
+
+    def _open_and_inject(self, url, label, text):
+        browser = self.add_new_tab(QUrl(url), label)
+        injected = [False]
+        target_domain = urlparse(url).netloc
+
+        def do_inject(b):
+            if injected[0]:
+                return
+            injected[0] = True
+            js = f'''
+            (function() {{
+                const text = {json.dumps(text)};
+                const enter = new KeyboardEvent('keydown', {{key:'Enter', code:'Enter', keyCode:13, which:13, bubbles:true, composed:true}});
+                const enterUp = new KeyboardEvent('keyup', {{key:'Enter', code:'Enter', keyCode:13, which:13, bubbles:true, composed:true}});
+                const inpEv = new InputEvent('input', {{bubbles:true}});
+
+                let nativeSetter = null;
+                try {{
+                    nativeSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+                }} catch(e) {{}}
+
+                const setValue = (el, val) => {{
+                    if (nativeSetter) nativeSetter.call(el, val);
+                    else el.value = val;
+                }};
+
+                const pressEnter = (el) => {{
+                    setTimeout(() => {{
+                        el.focus();
+                        el.dispatchEvent(enter);
+                        el.dispatchEvent(enterUp);
+                    }}, 1000);
+                }};
+
+                const tryEl = (el, isCE) => {{
+                    if (!el || el.offsetParent === null) return false;
+                    el.focus();
+                    if (isCE) el.innerText = text;
+                    else setValue(el, text);
+                    el.dispatchEvent(inpEv);
+                    pressEnter(el);
+                    return true;
+                }};
+
+                // rich-textarea shadow DOM (Gemini)
+                const rt = document.querySelector('rich-textarea');
+                if (rt && rt.shadowRoot) {{
+                    const inner = rt.shadowRoot.querySelector('div[contenteditable="true"], [contenteditable]');
+                    if (tryEl(inner, true)) return;
+                }}
+
+                // visible contenteditable divs
+                for (const ed of document.querySelectorAll('div[contenteditable="true"]')) {{
+                    if (tryEl(ed, true)) return;
+                }}
+
+                // visible textareas (last one = chat input at bottom)
+                const tas = Array.from(document.querySelectorAll('textarea')).filter(t => t.offsetParent !== null);
+                if (tas.length && tryEl(tas[tas.length - 1], false)) return;
+
+                // visible text/search inputs
+                const inps = Array.from(document.querySelectorAll('input[type="text"], input:not([type]), input[type="search"]')).filter(i => i.offsetParent !== null);
+                if (inps.length) tryEl(inps[inps.length - 1], false);
+            }})();
+            '''
+            b.page().runJavaScript(js)
+
+        def on_load_ok(b=browser, inj=injected):
+            if inj[0]:
+                return
+            url_str = b.url().toString()
+            current_domain = urlparse(url_str).netloc
+            if target_domain in current_domain:
+                QTimer.singleShot(3000, lambda: do_inject(b))
+
+        browser.loadFinished.connect(lambda ok: on_load_ok() if ok else None)
 
     def tab_changed(self, index):
         browser = self.tabs.widget(index)
