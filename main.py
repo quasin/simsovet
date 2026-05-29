@@ -18,7 +18,8 @@ from PySide6.QtWidgets import (
     QToolBar,
     QLabel,
     QStyle,
-    QStatusBar
+    QStatusBar,
+    QMenu
 )
 from PySide6.QtWebEngineCore import QWebEngineProfile
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -29,7 +30,7 @@ class WebBrowser(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Simsovet - Neuro Handler")
-        self.resize(1200, 800)
+        self.showMaximized()
 
         self.base_dir = os.path.dirname(__file__)
         self.data_dir = os.path.join(self.base_dir, "data")
@@ -268,12 +269,12 @@ class WebBrowser(QMainWindow):
         self.toolbar.addWidget(self.new_tab_btn)
 
     def add_new_tab(self, qurl=None, title="New Tab"):
-        browser = QWebEngineView()
-        
+        browser = CustomWebEngineView(self)
+
         custom_page = CustomWebEnginePage(self, self.profile, browser)
         custom_page.linkHovered.connect(self.show_link_in_status_bar)
         browser.setPage(custom_page)
-        
+
         if qurl:
             browser.setUrl(qurl)
 
@@ -283,10 +284,10 @@ class WebBrowser(QMainWindow):
 
         # Handles address bar visual updates
         browser.urlChanged.connect(lambda qurl, b=browser: self.update_url_bar(qurl, b))
-        
+
         # Dedicated handler to intercept background tabs / targets asynchronously
         browser.urlChanged.connect(lambda qurl, b=browser: self.handle_history_logging(qurl, b))
-        
+
         browser.titleChanged.connect(lambda t, b=browser: self.update_tab_title(t, b))
 
         return browser
@@ -479,6 +480,46 @@ class WebBrowser(QMainWindow):
         QApplication.sendPostedEvents()
         QApplication.processEvents()
         event.accept()
+
+
+class CustomWebEngineView(QWebEngineView):
+    def __init__(self, browser_window, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.browser_window = browser_window
+
+    def contextMenuEvent(self, event):
+        page = self.page()
+        selected_text = page.selectedText()
+
+        menu = QMenu(self)
+
+        back_action = menu.addAction("Back")
+        back_action.setEnabled(self.history().canGoBack())
+        back_action.triggered.connect(self.back)
+
+        forward_action = menu.addAction("Forward")
+        forward_action.setEnabled(self.history().canGoForward())
+        forward_action.triggered.connect(self.forward)
+
+        reload_action = menu.addAction("Reload")
+        reload_action.triggered.connect(self.reload)
+
+        menu.addSeparator()
+
+        copy_action = menu.addAction("Copy")
+        copy_action.setEnabled(bool(selected_text))
+        copy_action.triggered.connect(lambda: page.triggerAction(QWebEnginePage.WebAction.Copy))
+
+        select_all_action = menu.addAction("Select All")
+        select_all_action.triggered.connect(lambda: page.triggerAction(QWebEnginePage.WebAction.SelectAll))
+
+        menu.addSeparator()
+
+        copy_url_action = menu.addAction("Copy selected to URL input")
+        copy_url_action.setEnabled(bool(selected_text))
+        copy_url_action.triggered.connect(lambda: self.browser_window.url_input.setText(selected_text))
+
+        menu.exec(self.mapToGlobal(event.pos()))
 
 
 class CustomWebEnginePage(QWebEnginePage):
