@@ -80,10 +80,31 @@ class WebBrowser(QMainWindow):
         btn_layout = QHBoxLayout(btn_wonder)
         btn_layout.setContentsMargins(0, 0, 0, 0)
         btn_layout.setSpacing(5)
-        get_post_btn = QPushButton("Get Post")
-        get_post_btn.setStyleSheet("padding: 8px; background-color: #3b4252; border: 1px solid #4c566a; border-radius: 4px; color: #eceff4; font-weight: bold; font-size: 10px;")
+        btn_style = "padding: 8px; background-color: #3b4252; border: 1px solid #4c566a; border-radius: 4px; color: #eceff4; font-weight: bold; font-size: 10px;"
+        get_post_btn = QPushButton("Day")
+        get_post_btn.setStyleSheet(btn_style)
         get_post_btn.clicked.connect(self.handle_get_post)
         btn_layout.addWidget(get_post_btn)
+        rewrite_day_btn = QPushButton("R")
+        rewrite_day_btn.setStyleSheet(btn_style)
+        rewrite_day_btn.clicked.connect(self.handle_rewrite_day)
+        btn_layout.addWidget(rewrite_day_btn)
+        get_week_btn = QPushButton("Week")
+        get_week_btn.setStyleSheet(btn_style)
+        get_week_btn.clicked.connect(self.handle_get_week)
+        btn_layout.addWidget(get_week_btn)
+        rewrite_week_btn = QPushButton("R")
+        rewrite_week_btn.setStyleSheet(btn_style)
+        rewrite_week_btn.clicked.connect(self.handle_rewrite_week)
+        btn_layout.addWidget(rewrite_week_btn)
+        get_month_btn = QPushButton("Month")
+        get_month_btn.setStyleSheet(btn_style)
+        get_month_btn.clicked.connect(self.handle_get_month)
+        btn_layout.addWidget(get_month_btn)
+        rewrite_month_btn = QPushButton("R")
+        rewrite_month_btn.setStyleSheet(btn_style)
+        rewrite_month_btn.clicked.connect(self.handle_rewrite_month)
+        btn_layout.addWidget(rewrite_month_btn)
         sidebar_layout.addWidget(btn_wonder)
 
         self.recent_history_section = QWidget()
@@ -141,6 +162,12 @@ class WebBrowser(QMainWindow):
                 title TEXT,
                 url TEXT NOT NULL,
                 visited_at TEXT NOT NULL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS daily_feed (
+                date TEXT PRIMARY KEY,
+                text TEXT NOT NULL
             )
         """)
         conn.commit()
@@ -319,11 +346,63 @@ class WebBrowser(QMainWindow):
         if self.current_browser():
             self.current_browser().setUrl(q)
 
+    def _feed_get_or_save(self, key):
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT text FROM daily_feed WHERE date = ?", (key,))
+            row = cursor.fetchone()
+            if row:
+                self.url_input.setText(row[0])
+            else:
+                text = self.url_input.text().strip()
+                if text:
+                    cursor.execute(
+                        "INSERT OR REPLACE INTO daily_feed (date, text) VALUES (?, ?)",
+                        (key, text)
+                    )
+                    conn.commit()
+            conn.close()
+        except sqlite3.Error as e:
+            print(f"Feed DB error: {e}")
+
     def handle_get_post(self):
-        query_text = self.url_input.text().strip()
-        if not query_text:
+        key = datetime.now().strftime("%Y-%m-%d")
+        self._feed_get_or_save(key)
+
+    def handle_get_week(self):
+        now = datetime.now()
+        key = now.strftime("%Y-W%W")
+        self._feed_get_or_save(key)
+
+    def handle_get_month(self):
+        key = datetime.now().strftime("%Y-%m")
+        self._feed_get_or_save(key)
+
+    def _feed_rewrite(self, key):
+        text = self.url_input.text().strip()
+        if not text:
             return
-        self._open_and_inject("https://gemini.google.com/?hl=ru", "Get Post", query_text)
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT OR REPLACE INTO daily_feed (date, text) VALUES (?, ?)",
+                (key, text)
+            )
+            conn.commit()
+            conn.close()
+        except sqlite3.Error as e:
+            print(f"Feed DB error: {e}")
+
+    def handle_rewrite_day(self):
+        self._feed_rewrite(datetime.now().strftime("%Y-%m-%d"))
+
+    def handle_rewrite_week(self):
+        self._feed_rewrite(datetime.now().strftime("%Y-W%W"))
+
+    def handle_rewrite_month(self):
+        self._feed_rewrite(datetime.now().strftime("%Y-%m"))
 
     def handle_quick_button(self, url, label):
         query_text = self.url_input.text().strip()
