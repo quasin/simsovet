@@ -69,7 +69,7 @@ class WebBrowser(QMainWindow):
         btn_layout = QHBoxLayout(btn_container)
         btn_layout.setContentsMargins(0, 0, 0, 0)
         btn_layout.setSpacing(5)
-        for label, url in [("Alice", "https://alice.yandex.ru"), ("Gemini", "https://gemini.google.com"), ("DeepSeek", "https://chat.deepseek.com")]:
+        for label, url in [("Alice", "https://alice.yandex.ru/?lang=ru"), ("Gemini", "https://gemini.google.com/?hl=ru"), ("DeepSeek", "https://chat.deepseek.com")]:
             btn = QPushButton(label)
             btn.setStyleSheet("padding: 8px; background-color: #3b4252; border: 1px solid #4c566a; border-radius: 4px; color: #eceff4; font-weight: bold; font-size: 10px;")
             btn.clicked.connect((lambda u, l: lambda: self.handle_quick_button(u, l))(url, label))
@@ -129,7 +129,7 @@ class WebBrowser(QMainWindow):
 
         self.create_toolbar_actions()
 
-        self.add_new_tab(QUrl("https://www.google.com"), "New Tab")
+        self.add_new_tab(QUrl("https://www.google.com/?hl=ru"), "New Tab")
 
     def init_db(self):
         conn = sqlite3.connect(self.db_path)
@@ -265,7 +265,7 @@ class WebBrowser(QMainWindow):
         self.toolbar.addSeparator()
 
         self.new_tab_btn = QPushButton("+ New Tab")
-        self.new_tab_btn.clicked.connect(lambda: self.add_new_tab(QUrl("https://www.google.com"), "New Tab"))
+        self.new_tab_btn.clicked.connect(lambda: self.add_new_tab(QUrl("https://www.google.com/?hl=ru"), "New Tab"))
         self.toolbar.addWidget(self.new_tab_btn)
 
     def add_new_tab(self, qurl=None, title="New Tab"):
@@ -309,7 +309,7 @@ class WebBrowser(QMainWindow):
 
     def navigate_home(self):
         if self.current_browser():
-            self.current_browser().setUrl(QUrl("https://www.google.com"))
+            self.current_browser().setUrl(QUrl("https://www.google.com/?hl=ru"))
 
     def navigate_to_url(self):
         q = QUrl(self.url_input.text())
@@ -323,11 +323,11 @@ class WebBrowser(QMainWindow):
         query_text = self.url_input.text().strip()
         if not query_text:
             return
-        self._open_and_inject("https://gemini.google.com", "Get Post", query_text)
+        self._open_and_inject("https://gemini.google.com/?hl=ru", "Get Post", query_text)
 
     def handle_quick_button(self, url, label):
         query_text = self.url_input.text().strip()
-        if query_text and query_text != "https://www.google.com/":
+        if query_text and query_text != "https://www.google.com/?hl=ru":
             self._open_and_inject(url, label, query_text)
         else:
             self.add_new_tab(QUrl(url), label)
